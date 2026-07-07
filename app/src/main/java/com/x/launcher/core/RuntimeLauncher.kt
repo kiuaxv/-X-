@@ -1,7 +1,9 @@
-package com.x.launcher.core
+ package com.x.launcher.core
 
 import android.content.Context
 import android.content.Intent
+import com.x.launcher.runtime.DynamicClassLoader
+import com.x.launcher.runtime.JVMRuntime
 import java.io.File
 
 data class LaunchConfig(
@@ -27,7 +29,11 @@ object RuntimeLauncher {
  config: LaunchConfig
  ): LaunchResult {
  return try {
- val versionFile = File(config.gameDir, "versions/${config.versionId}/${config.versionId}.jar")
+ // 1. Verify version file exists
+ val versionFile = File(
+ config.gameDir,
+ "versions/${config.versionId}/${config.versionId}.jar"
+ )
 
  if (!versionFile.exists()) {
  return LaunchResult(
@@ -36,15 +42,58 @@ object RuntimeLauncher {
  )
  }
 
- val javaCommand = buildJavaCommand(config, versionFile)
+ // 2. Load game classes dynamically
+ val loadResult = DynamicClassLoader.loadGameJar(
+ jarFile = versionFile,
+ librariesDir = config.librariesDir
+ )
 
+ if (!loadResult.success) {
+ return LaunchResult(
+ success = false,
+ message = "Failed to load classes: ${loadResult.message}"
+ )
+ }
+
+ val mainClass = loadResult.mainClass
+ ?: "net.minecraft.client.main.Main"
+
+ // 3. Build JVM config
+ val jvmConfig = JVMRuntime.JVMConfig(
+ javaHome = File(config.gameDir, "jvm-runtime"),
+ classpath = buildClasspath(config, versionFile),
+ mainClass = mainClass,
+ minMemoryMb = config.minMemoryMb,
+ maxMemoryMb = config.maxMemoryMb,
+ extraArgs = listOf(
+ "--username", config.username,
+ "--version", config.versionId,
+ "--gameDir", config.gameDir.absolutePath,
+ "--assetsDir", config.assetsDir.absolutePath,
+ "--assetIndex", config.versionId,
+ "--accessToken", "offline",
+ "--userType", "legacy",
+ "--versionType", "release"
+ ) + config.javaArgs
+ )
+
+ // 4. Start JVM
+ val jvmResult = JVMRuntime.start(jvmConfig)
+
+ if (!jvmResult.success) {
+ return LaunchResult(
+ success = false,
+ message = "JVM failed: ${jvmResult.message}"
+ )
+ }
+
+ // 5. Launch GameActivity for rendering + input
  val intent = Intent(context, GameActivity::class.java).apply {
  putExtra("versionId", config.versionId)
  putExtra("username", config.username)
  putExtra("minMemoryMb", config.minMemoryMb)
  putExtra("maxMemoryMb", config.maxMemoryMb)
- putStringArrayListExtra("javaArgs", ArrayList(config.javaArgs))
- putExtra("javaCommand", javaCommand)
+ putExtra("mainClass", mainClass)
  putExtra("gameDir", config.gameDir.absolutePath)
  putExtra("assetsDir", config.assetsDir.absolutePath)
  putExtra("librariesDir", config.librariesDir.absolutePath)
@@ -65,45 +114,19 @@ object RuntimeLauncher {
  }
  }
 
- private fun buildJavaCommand(
- config: LaunchConfig,
- versionFile: File
- ): String {
- val classpath = buildClasspath(config, versionFile)
-
- val baseArgs = listOf(
- "java",
- "-Xms${config.minMemoryMb}M",
- "-Xmx${config.maxMemoryMb}M",
- "-cp",
- classpath,
- "net.minecraft.client.main.Main",
- "--username", config.username,
- "--version", config.versionId,
- "--gameDir", config.gameDir.absolutePath,
- "--assetsDir", config.assetsDir.absolutePath,
- "--assetIndex", config.versionId,
- "--accessToken", "offline",
- "--userType", "legacy",
- "--versionType", "release"
- )
-
- return (baseArgs + config.javaArgs).joinToString(" ")
- }
-
  private fun buildClasspath(
  config: LaunchConfig,
  versionFile: File
- ): String {
+ ): List<File> {
  val libraries = config.librariesDir
  .walkTopDown()
  .filter { it.isFile && it.extension == "jar" }
- .joinToString(File.pathSeparator) { it.absolutePath }
+ .toList()
 
  return if (libraries.isNotEmpty()) {
- libraries + File.pathSeparator + versionFile.absolutePath
+ libraries + versionFile
  } else {
- versionFile.absolutePath
+ listOf(versionFile)
  }
  }
 }
