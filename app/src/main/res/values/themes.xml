@@ -1,0 +1,15 @@
+?xml version="1.0" encoding="utf-8"?>
+<resources>
+ <style name="Theme.XLauncher" parent="android:Theme.Material.NoActionBar">
+ <item name="android:windowBackground">@color/x_black</item>
+ <item name="android:statusBarColor">@color/x_black</item>
+ <item name="android:navigationBarColor">@color/x_black</item>
+ <item name="android:windowLightStatusBar">false</item>
+ <item name="android:windowFullscreen">false</item>
+ <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+ </style>
+
+ <style name="Theme.XLauncher.Splash" parent="Theme.XLauncher">
+ <item name="android:windowBackground">@drawable/splash_background</item>
+ </style>
+</resources>
