@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+ <color name="x_black">#FF0A0A0A</color>
+ <color name="x_butter_yellow">#FFE8B747</color>
+ <color name="x_white">#FFFFFFFF</color>
+ <color name="x_card_dark">#FF1C1C1E</color>
+ <color name="x_green">#FF34C759</color>
+ <color name="x_red">#FFFF4444</color>
+</resources>
