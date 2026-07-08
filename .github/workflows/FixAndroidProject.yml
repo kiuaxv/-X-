@@ -1,0 +1,128 @@
+name: Fix Android Project
+
+on:
+ workflow_dispatch:
+ push:
+ branches:
+ - main
+ - master
+
+jobs:
+ fix-and-build:
+ runs-on: ubuntu-latest
+
+ steps:
+ - name: Checkout
+ uses: actions/checkout@v4
+ - name: Set up JDK 17
+ uses: actions/setup-java@v4
+ with:
+ distribution: temurin
+ java-version: "17"
+ cache: gradle
+
+ - name: Set up Android SDK
+ uses: android-actions/setup-android@v3
+
+ - name: Prepare Gradle
+ run: |
+ chmod +x gradlew || true
+ echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+ - name: Ensure folders
+ run: |
+ mkdir -p app/src/main/res/values
+ mkdir -p app/src/main/res/drawable
+ mkdir -p app/src/main/java/com/x/launcher/more
+ mkdir -p app/src/main
+ mkdir -p app
+
+ - name: Copy More files
+ run: |
+ if [ -d "More" ]; then
+ cp More/*.kt app/src/main/java/com/x/launcher/more/ || true
+ fi
+
+ - name: Fix themes.xml
+ run: |
+ cat > app/src/main/res/values/themes.xml << 'EOF'
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+ <style name="Theme.XLauncher" parent="Theme.Material3.DayNight.NoActionBar" />
+ </resources>
+ EOF
+
+ - name: Fix colors.xml
+ run: |
+ cat > app/src/main/res/values/colors.xml << 'EOF'
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+ <color name="black">#000000</color>
+ <color name="white">#FFFFFF</color>
+ </resources>
+ EOF
+
+ - name: Fix strings.xml
+ run: |
+ cat > app/src/main/res/values/strings.xml << 'EOF'
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+ <string name="app_name">X Launcher</string>
+ </resources>
+ EOF
+
+ - name: Fix launcher foreground
+ run: |
+ cat > app/src/main/res/drawable/ic_launcher_foreground.xml << 'EOF'
+ <?xml version="1.0" encoding="utf-8"?>
+ <vector xmlns:android="http://schemas.android.com/apk/res/android"
+ android:width="108dp"
+ android:height="108dp"
+ android:viewportWidth="108"
+ android:viewportHeight="108">
+ <path
+ android:fillColor="#FFFFFF"
+ android:pathData="M54,27 L81,81 L27,81 Z" />
+ </vector>
+ EOF
+
+ - name: Fix AndroidManifest.xml
+ run: |
+ cat > app/src/main/AndroidManifest.xml << 'EOF'
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+ <application
+ android:allowBackup="true"
+ android:icon="@mipmap/ic_launcher"
+ android:label="@string/app_name"
+ android:roundIcon="@mipmap/ic_launcher_round"
+ android:supportsRtl="true"
+ android:theme="@style/Theme.XLauncher">
+
+ <activity
+ android:name=".game.GameActivity"
+ android:exported="false" />
+ </application>
+
+ </manifest>
+ EOF
+
+ - name: Ensure proguard-rules.pro
+ run: |
+ cat > app/proguard-rules.pro << 'EOF'
+ -keep class com.x.launcher.** { *; }
+ -keep class org.json.** { *; }
+ -dontwarn org.lwjgl.**
+ -dontwarn net.minecraft.**
+ EOF
+
+ - name: Build Debug APK
+ run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+ - name: Upload Debug APK
+ uses: actions/upload-artifact@v4
+ with:
+ name: launcher-debug
+ path: app/build/outputs/apk/debug/*.apk
+ if-no-files-found: error
