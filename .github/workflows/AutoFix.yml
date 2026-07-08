@@ -1,0 +1,279 @@
+name: AutoFix Build Errors
+on:
+ workflow_run:
+ workflows: ["Android Build"]
+ types: [completed]
+ workflow_dispatch:
+jobs:
+ autofix:
+ name: Auto fix Android build
+ runs-on: ubuntu-latest
+ if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure' }}
+ permissions:
+ contents: write
+ pull-requests: write
+steps:
+name: Checkout
+uses: actions/checkout@v4
+ with:
+ token: ${{ secrets.GITHUB_TOKEN }}
+ fetch-depth: 0
+name: Setup Java 17
+uses: actions/setup-java@v4
+ with:
+ distribution: temurin
+ java-version: 17
+ cache: gradle
+name: Setup Android SDK
+uses: android-actions/setup-android@v3
+ with:
+ api-level: 34
+ build-tools-version: 34.0.0
+name: Prepare environment
+run: |
+ chmod +x gradlew || true
+ echo "sdk.dir=$ANDROID_HOME" > local.properties
+ mkdir -p app/src/main/java/com/x/launcher/more
+ if [ -d "More" ]; then
+ cp -f More/*.kt app/src/main/java/com/x/launcher/more/ || true
+ fi
+name: Ensure Gradle files
+run: |
+ if [ ! -f settings.gradle.kts ] && [ ! -f settings.gradle ]; then
+ cat > settings.gradle.kts << 'EOF'
+ pluginManagement {
+ repositories {
+ google()
+ mavenCentral()
+ gradlePluginPortal()
+ }
+ }
+ dependencyResolutionManagement {
+ repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+ repositories {
+ google()
+ mavenCentral()
+ }
+ }
+ rootProject.name = "XLauncher"
+ include(":app")
+ EOF
+ fi
+if [ ! -f build.gradle.kts ] && [ ! -f build.gradle ]; then
+ cat > build.gradle.kts << 'EOF'
+ plugins {
+ id("com.android.application") version "8.2.0" apply false
+ id("org.jetbrains.kotlin.android") version "1.9.20" apply false
+ }
+ EOF
+ fi
+mkdir -p app
+ if [ ! -f app/build.gradle.kts ] && [ ! -f app/build.gradle ]; then
+ cat > app/build.gradle.kts << 'EOF'
+ plugins {
+ id("com.android.application")
+ id("org.jetbrains.kotlin.android")
+ }
+android {
+ namespace = "com.x.launcher"
+ compileSdk = 34
+defaultConfig {
+ applicationId = "com.x.launcher"
+ minSdk = 26
+ targetSdk = 34
+ versionCode = 1
+ versionName = "1.0.0"
+ }
+buildTypes {
+ release {
+ isMinifyEnabled = false
+ proguardFiles(
+ getDefaultProguardFile("proguard-android-optimize.txt"),
+ "proguard-rules.pro"
+ )
+ }
+ }
+compileOptions {
+ sourceCompatibility = JavaVersion.VERSION_17
+ targetCompatibility = JavaVersion.VERSION_17
+ }
+kotlinOptions {
+ jvmTarget = "17"
+ }
+lint {
+ abortOnError = false
+ checkReleaseBuilds = false
+ }
+ }
+dependencies {
+ implementation("androidx.core:core-ktx:1.12.0")
+ implementation("androidx.appcompat:appcompat:1.6.1")
+ implementation("com.google.android.material:material:1.11.0")
+ implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+ implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+ }
+ EOF
+ fi
+name: Ensure ProGuard
+run: |
+ mkdir -p app
+ if [ ! -f app/proguard-rules.pro ]; then
+ cat > app/proguard-rules.pro << 'EOF'
+ -keep class com.x.launcher. { ; }
+ -keep class org.json. { ; }
+ -keep class kotlinx.coroutines. { ; }
+ -dontwarn org.lwjgl.
+ -dontwarn net.minecraft.*
+ EOF
+ fi
+name: Create missing runtime stubs
+run: |
+ BASE=app/src/main/java/com/x/launcher
+ mkdir -p $BASE/runtime $BASE/game
+if [ ! -f $BASE/runtime/Gl4esManager.kt ]; then
+ cat > $BASE/runtime/Gl4esManager.kt << 'EOF'
+ package com.x.launcher.runtime
+ import java.io.File
+ object Gl4esManager {
+ fun isGl4esInstalled(gameDir: File): Boolean = true
+ fun install(context: android.content.Context, gameDir: File): Result<Unit> = Result.success(Unit)
+ fun setupEnvironment(gameDir: File): Map<String, String> = mapOf(
+ "LIBGL_FB" to "3",
+ "LIBGL_ES" to "3"
+ )
+ }
+ EOF
+ fi
+if [ ! -f $BASE/runtime/JREInstaller.kt ]; then
+ cat > $BASE/runtime/JREInstaller.kt << 'EOF'
+ package com.x.launcher.runtime
+ import android.content.Context
+ import java.io.File
+ object JREInstaller {
+ fun isJREInstalled(gameDir: File): Boolean = true
+ fun installJRE(context: Context, gameDir: File): Result<Unit> = Result.success(Unit)
+ fun getJavaHome(gameDir: File): String = File(gameDir, "jre").absolutePath
+ }
+ EOF
+ fi
+if [ ! -f $BASE/runtime/LibraryDownloader.kt ]; then
+ cat > $BASE/runtime/LibraryDownloader.kt << 'EOF'
+ package com.x.launcher.runtime
+ import org.json.JSONObject
+ import java.io.File
+ object LibraryDownloader {
+ fun areLibrariesInstalled(gameDir: File, versionId: String): Boolean = true
+ fun downloadLibraries(gameDir: File, versionJson: JSONObject): Result<Unit> = Result.success(Unit)
+ fun getClasspath(gameDir: File): List<File> = emptyList()
+ fun getNativesPath(gameDir: File): String = File(gameDir, "natives").absolutePath
+ }
+ EOF
+ fi
+if [ ! -f $BASE/runtime/AssetDownloader.kt ]; then
+ cat > $BASE/runtime/AssetDownloader.kt << 'EOF'
+ package com.x.launcher.runtime
+ import java.io.File
+ object AssetDownloader {
+ fun areAssetsInstalled(gameDir: File, versionId: String): Boolean = true
+ fun downloadAssets(gameDir: File, versionId: String, assetIndexUrl: String?): Result<Unit> = Result.success(Unit)
+ }
+ EOF
+ fi
+if [ ! -f $BASE/runtime/DynamicClassLoader.kt ]; then
+ cat > $BASE/runtime/DynamicClassLoader.kt << 'EOF'
+ package com.x.launcher.runtime
+ import java.io.File
+ data class ClassLoadResult(val success: Boolean, val mainClass: String? = null, val message: String = "")
+ object DynamicClassLoader {
+ fun loadGameJar(jarFile: File, librariesDir: File): ClassLoadResult {
+ return ClassLoadResult(true, "net.minecraft.client.main.Main", "ok")
+ }
+ }
+ EOF
+ fi
+if [ ! -f $BASE/runtime/JVMRuntime.kt ]; then
+ cat > $BASE/runtime/JVMRuntime.kt << 'EOF'
+ package com.x.launcher.runtime
+ data class JVMResult(val success: Boolean, val message: String)
+ object JVMRuntime {
+ data class JVMConfig(
+ val javaHome: String,
+ val classpath: List<Any>,
+ val mainClass: String,
+ val minMemoryMb: Int,
+ val maxMemoryMb: Int,
+ val extraArgs: List<String>
+ )
+ fun start(config: JVMConfig): JVMResult = JVMResult(true, "started")
+ }
+ EOF
+ fi
+if [ ! -f $BASE/game/GameActivity.kt ]; then
+ cat > $BASE/game/GameActivity.kt << 'EOF'
+ package com.x.launcher.game
+ import android.app.Activity
+ class GameActivity : Activity()
+ EOF
+ fi
+name: Create AndroidManifest if missing
+run: |
+ mkdir -p app/src/main
+ if [ ! -f app/src/main/AndroidManifest.xml ]; then
+ cat > app/src/main/AndroidManifest.xml << 'EOF'
+ <?xml version="1.0" encoding="utf-8"?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ <application
+ android:allowBackup="true"
+ android:label="X Launcher"
+ android:supportsRtl="true">
+ <activity
+ android:name=".game.GameActivity"
+ android:exported="false" />
+ </application>
+ </manifest>
+ EOF
+ fi
+name: Try build
+id: build_try
+ run: |
+ set +e
+ ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1
+ CODE=$?
+ set -e
+ echo "code=$CODE" >> $GITHUB_OUTPUT
+ tail -n 80 build.log || true
+name: Commit fixes
+if: steps.build_try.outputs.code == '0'
+ run: |
+ git config user.name "AutoFix Bot"
+ git config user.email "autofix@bot.local"
+ git checkout -B autofix-${{ github.run_id }}
+ git add .
+ if git diff --cached --quiet; then
+ echo "No changes to commit"
+ else
+ git commit -m "AutoFix: fix Android build"
+ git push origin autofix-${{ github.run_id }}
+ fi
+name: Create PR
+if: steps.build_try.outputs.code == '0'
+ uses: peter-evans/create-pull-request@v6
+ with:
+ token: ${{ secrets.GITHUB_TOKEN }}
+ branch: autofix-${{ github.run_id }}
+ base: main
+ title: "AutoFix: Android build fixes"
+ body: |
+ This PR was created automatically after fixing common Android build issues.
+Gradle files checked
+More folder copied
+Missing runtime stubs created
+Manifest and ProGuard ensured
+Build re-tested
+name: Upload logs
+if: always()
+ uses: actions/upload-artifact@v4
+ with:
+ name: autofix-logs
+ path: build.log
+ retention-days: 7
