@@ -1,20 +1,30 @@
-<?xml version="1.0" encoding="utf-8"?> <resources xmIns:tools="http:// schemas.android.com/tools"> <style name="Theme.XLauncher" parent="
+<?xml version="1.0" encoding="utf-8"?> <resources xmIns:tools="http:// schemas.android.com/tools">
 
-Theme.Material3.DayNight.NoActionBar"> <item
+<style name="Theme.XLauncher" parent="
 
-name="colorPrimary">@android:color/ holo_blue_dark</item>
+Theme.Material3.DayNight.NoActionBar">
 
-<item name="colorPrimaryVariant">@a ndroid:color/holo_blue_dark</item>
+<item
 
 <item
 
 <item name="android:statusBarColor">
 
+name="colorPrimary">@android:color/
+
+holo_blue_dark</item>
+
+<item name="colorPrimaryVariant">@a ndroid:color/holo_blue_dark</item>
+
 name="colorOnPrimary">@android:color/ white</item>
 
 @android:color/transparent</item> <item name="android:navigationBarCol or">@android:color/black</item>
 
-<item name="android:windowLightStatusBar" tools:targetApi="23">false</item>
+<item
+
+name="android:windowLightStatusBar"
+
+tools:targetApi="23">false</item>
 
 </style>
 
