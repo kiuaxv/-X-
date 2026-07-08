@@ -1,3 +1,4 @@
+ 
 package com.x.launcher.core
 
 import android.content.Context
@@ -9,6 +10,7 @@ import com.x.launcher.runtime.Gl4esManager
 import com.x.launcher.runtime.JREInstaller
 import com.x.launcher.runtime.JVMRuntime
 import com.x.launcher.runtime.LibraryDownloader
+import com.x.launcher.xop.XOP
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +42,7 @@ data class LaunchStage(
 
 enum class LaunchStep {
  IDLE,
+ PREPARING_XOP,
  CHECKING_VERSION,
  INSTALLING_JRE,
  INSTALLING_GL4ES,
@@ -64,7 +67,40 @@ object RuntimeLauncher {
  config: LaunchConfig
  ): LaunchResult = withContext(Dispatchers.IO) {
  try {
- // 1. Verify version exists
+ // 1. Prepare XOP first
+ _launchStage.value = LaunchStage(
+ LaunchStep.PREPARING_XOP,
+ "Optimizing launch (XOP)..."
+ )
+
+ val xopConfig = XOP.Config(
+ enabled = true,
+ autoDetect = true,
+ fastLaunch = true,
+ heavyModSupport = true,
+ shaderCompatibility = true,
+ smartMemoryTuning = true,
+ renderOptimization = true,
+ libraryPreload = true,
+ textureStreaming = true,
+ modCompatScan = true
+ )
+
+ val xopBundle = XOP.prepareForRuntime(
+ context = context,
+ gameDir = config.gameDir,
+ config = xopConfig
+ )
+
+ if (!xopBundle.success) {
+ _launchStage.value = LaunchStage(
+ LaunchStep.ERROR,
+ "XOP preparation failed: ${xopBundle.message}"
+ )
+ return@withContext LaunchResult(false, xopBundle.message)
+ }
+
+ // 2. Verify version exists
  _launchStage.value = LaunchStage(
  LaunchStep.CHECKING_VERSION,
  "Checking version ${config.versionId}..."
@@ -90,7 +126,7 @@ object RuntimeLauncher {
  )
  }
 
- // 2. Install JRE if needed
+ // 3. Install JRE if needed
  if (!JREInstaller.isJREInstalled(config.gameDir)) {
  _launchStage.value = LaunchStage(
  LaunchStep.INSTALLING_JRE,
@@ -110,7 +146,7 @@ object RuntimeLauncher {
  }
  }
 
- // 3. Install gl4es if needed
+ // 4. Install gl4es if needed
  if (!Gl4esManager.isGl4esInstalled(config.gameDir)) {
  _launchStage.value = LaunchStage(
  LaunchStep.INSTALLING_GL4ES,
@@ -130,7 +166,7 @@ object RuntimeLauncher {
  }
  }
 
- // 4. Download libraries if needed
+ // 5. Download libraries if needed
  if (!LibraryDownloader.areLibrariesInstalled(config.gameDir, config.versionId)) {
  _launchStage.value = LaunchStage(
  LaunchStep.DOWNLOADING_LIBRARIES,
@@ -154,7 +190,7 @@ object RuntimeLauncher {
  }
  }
 
- // 5. Download assets if needed
+ // 6. Download assets if needed
  if (!AssetDownloader.areAssetsInstalled(config.gameDir, config.versionId)) {
  _launchStage.value = LaunchStage(
  LaunchStep.DOWNLOADING_ASSETS,
@@ -181,7 +217,7 @@ object RuntimeLauncher {
  }
  }
 
- // 6. Load game classes
+ // 7. Load game classes
  _launchStage.value = LaunchStage(
  LaunchStep.LOADING_CLASSES,
  "Loading game classes..."
@@ -206,7 +242,7 @@ object RuntimeLauncher {
  val mainClass = loadResult.mainClass
  ?: "net.minecraft.client.main.Main"
 
- // 7. Start JVM
+ // 8. Start JVM with XOP bundle
  _launchStage.value = LaunchStage(
  LaunchStep.STARTING_JVM,
  "Starting JVM..."
@@ -214,16 +250,9 @@ object RuntimeLauncher {
 
  val javaHome = JREInstaller.getJavaHome(config.gameDir)
  val classpath = LibraryDownloader.getClasspath(config.gameDir) + versionFile
- val nativesPath = LibraryDownloader.getNativesPath(config.gameDir)
- val gl4esEnv = Gl4esManager.setupEnvironment(config.gameDir)
+ val nativesPath = xopBundle.nativesPath
 
- val jvmConfig = JVMRuntime.JVMConfig(
- javaHome = javaHome,
- classpath = classpath,
- mainClass = mainClass,
- minMemoryMb = config.minMemoryMb,
- maxMemoryMb = config.maxMemoryMb,
- extraArgs = listOf(
+ val allJavaArgs = config.javaArgs + xopBundle.javaArgs + listOf(
  "--username", config.username,
  "--version", config.versionId,
  "--gameDir", config.gameDir.absolutePath,
@@ -232,9 +261,22 @@ object RuntimeLauncher {
  "--accessToken", "offline",
  "--userType", "legacy",
  "--versionType", "release",
- "-- nativesDir", nativesPath
- ) + config.javaArgs
+ "--nativesDir", nativesPath
  )
+
+ val jvmConfig = JVMRuntime.JVMConfig(
+ javaHome = javaHome,
+ classpath = classpath,
+ mainClass = mainClass,
+ minMemoryMb = xopBundle.minMemoryMb,
+ maxMemoryMb = xopBundle.maxMemoryMb,
+ extraArgs = allJavaArgs
+ )
+
+ // Apply XOP environment variables to process
+ xopBundle.envVars.forEach { (key, value) ->
+ setenv(key, value)
+ }
 
  val jvmResult = JVMRuntime.start(jvmConfig)
 
@@ -249,7 +291,7 @@ object RuntimeLauncher {
  )
  }
 
- // 8. Launch GameActivity
+ // 9. Launch GameActivity
  _launchStage.value = LaunchStage(
  LaunchStep.LAUNCHING_GAME,
  "Launching game..."
@@ -258,13 +300,16 @@ object RuntimeLauncher {
  val intent = Intent(context, GameActivity::class.java).apply {
  putExtra("versionId", config.versionId)
  putExtra("username", config.username)
- putExtra("minMemoryMb", config.minMemoryMb)
- putExtra("maxMemoryMb", config.maxMemoryMb)
+ putExtra("minMemoryMb", xopBundle.minMemoryMb)
+ putExtra("maxMemoryMb", xopBundle.maxMemoryMb)
  putExtra("mainClass", mainClass)
  putExtra("gameDir", config.gameDir.absolutePath)
  putExtra("assetsDir", config.assetsDir.absolutePath)
  putExtra("librariesDir", config.librariesDir.absolutePath)
  putExtra("nativesPath", nativesPath)
+ putExtra("shaderCompat", xopBundle.shaderCompatEnabled)
+ putExtra("heavyModMode", xopBundle.heavyModMode)
+ putExtra("clientOptionsJson", xopBundle.clientOptionsJson.toString())
  addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
  }
 
@@ -282,6 +327,19 @@ object RuntimeLauncher {
  e.message ?: "Unknown error"
  )
  LaunchResult(false, e.message ?: "Unknown launch error")
+ }
+ }
+
+ private fun setenv(key: String, value: String) {
+ try {
+ android.os.Process.setEnvVar(key, value)
+ } catch (_: Exception) {
+ // Fallback: set via system property if env var fails
+ try {
+ System.setProperty(key, value)
+ } catch (_: Exception) {
+ // Ignore if both fail
+ }
  }
  }
 
